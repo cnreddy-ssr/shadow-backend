@@ -48,6 +48,34 @@ def root():
     return {"status": "SHADOW. backend is running"}
 
 
+@app.get("/test-email")
+def test_email():
+    import json, urllib.request, urllib.error
+    payload = {
+        "from": "SHADOW Orders <onboarding@resend.dev>",
+        "to": ["cnreddy@gmail.com"],
+        "subject": "SHADOW. Test Email",
+        "text": "This is a test from SHADOW. backend."
+    }
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode())
+            return {"success": True, "resend_response": result}
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        return {"success": False, "status": e.code, "error": error_body, "api_key_set": bool(RESEND_API_KEY), "api_key_prefix": RESEND_API_KEY[:8] if RESEND_API_KEY else "EMPTY"}
+
+
 @app.post("/order")
 def receive_order(order: OrderRequest):
     try:
