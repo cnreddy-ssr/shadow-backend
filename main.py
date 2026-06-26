@@ -2,7 +2,6 @@ import os
 import base64
 import json
 import urllib.request
-import urllib.error
 from datetime import datetime
 from typing import List, Optional
 
@@ -60,7 +59,6 @@ def receive_order(order: OrderRequest):
 
 
 def send_order_email(order: OrderRequest):
-    # Build plain text body
     body = f"""
 NEW WALLPAPER ORDER RECEIVED
 ═══════════════════════════════════════
@@ -87,13 +85,12 @@ Custom Text : {order.customText or '—'}
 Background  : {order.bgColor}
 Accent      : {order.accentColor}
 Font        : {order.font}
-Photos      : {len(order.photos)} photo(s) attached below
+Photos      : {len(order.photos)} photo(s) attached
 
 ═══════════════════════════════════════
 Please process and deliver via WhatsApp to +{order.deliveryPhone}
 """
 
-    # Build attachments list for Resend
     attachments = []
     for i, photo in enumerate(order.photos):
         try:
@@ -101,15 +98,16 @@ Please process and deliver via WhatsApp to +{order.deliveryPhone}
             ext = "png" if "png" in header else "jpg"
             attachments.append({
                 "filename": f"order_{order.orderId}_photo{i+1}.{ext}",
-                "content": encoded  # Resend accepts raw base64
+                "content": encoded
             })
         except Exception as e:
             print(f"Could not prepare photo {i+1}: {e}")
 
-    # Resend API payload
+    # Resend free tier: from must be onboarding@resend.dev, to must be your own verified email
     payload = {
         "from": "SHADOW Orders <onboarding@resend.dev>",
-        "to": [ORDER_EMAIL],
+        "to": ["cnreddy@gmail.com"],
+        "reply_to": ORDER_EMAIL,
         "subject": f"[SHADOW.] New Order #{order.orderId} — {order.occasion} ({order.mode.upper()})",
         "text": body,
         "attachments": attachments
@@ -126,6 +124,11 @@ Please process and deliver via WhatsApp to +{order.deliveryPhone}
         method="POST"
     )
 
-    with urllib.request.urlopen(req) as response:
-        result = json.loads(response.read().decode())
-        print(f"Email sent via Resend: {result}")
+    try:
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode())
+            print(f"Email sent via Resend: {result}")
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        print(f"Resend error body: {error_body}")
+        raise Exception(f"Resend {e.code}: {error_body}")
