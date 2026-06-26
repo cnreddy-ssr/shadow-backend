@@ -1,10 +1,8 @@
 import os
-import smtplib
 import base64
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
+import json
+import urllib.request
+import urllib.error
 from datetime import datetime
 from typing import List, Optional
 
@@ -21,11 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SMTP_HOST     = "smtp.gmail.com"
-SMTP_PORT     = 587
-SMTP_USER     = os.environ.get("SMTP_USER", "getcnr@gmail.com")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
-ORDER_EMAIL   = os.environ.get("ORDER_EMAIL", "getcnr@gmail.com")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+ORDER_EMAIL    = os.environ.get("ORDER_EMAIL", "getcnr@gmail.com")
 
 
 class Photo(BaseModel):
@@ -65,11 +60,7 @@ def receive_order(order: OrderRequest):
 
 
 def send_order_email(order: OrderRequest):
-    msg = MIMEMultipart()
-    msg["From"]    = SMTP_USER
-    msg["To"]      = ORDER_EMAIL
-    msg["Subject"] = f"[SHADOW.] New Order #{order.orderId} — {order.occasion} ({order.mode.upper()})"
-
+    # Build plain text body
     body = f"""
 NEW WALLPAPER ORDER RECEIVED
 ═══════════════════════════════════════
@@ -96,29 +87,45 @@ Custom Text : {order.customText or '—'}
 Background  : {order.bgColor}
 Accent      : {order.accentColor}
 Font        : {order.font}
-Photos      : {len(order.photos)} photo(s) attached
+Photos      : {len(order.photos)} photo(s) attached below
 
 ═══════════════════════════════════════
 Please process and deliver via WhatsApp to +{order.deliveryPhone}
 """
-    msg.attach(MIMEText(body, "plain"))
 
+    # Build attachments list for Resend
+    attachments = []
     for i, photo in enumerate(order.photos):
         try:
             header, encoded = photo.data.split(",", 1)
             ext = "png" if "png" in header else "jpg"
-            image_data = base64.b64decode(encoded)
-            part = MIMEBase("application", "octet-stream")
-            part.set_payload(image_data)
-            encoders.encode_base64(part)
-            part.add_header("Content-Disposition", f'attachment; filename="order_{order.orderId}_photo{i+1}.{ext}"')
-            msg.attach(part)
+            attachments.append({
+                "filename": f"order_{order.orderId}_photo{i+1}.{ext}",
+                "content": encoded  # Resend accepts raw base64
+            })
         except Exception as e:
-            print(f"Could not attach photo {i+1}: {e}")
+            print(f"Could not prepare photo {i+1}: {e}")
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.ehlo()
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.sendmail(SMTP_USER, ORDER_EMAIL, msg.as_string())
-        print(f"Order email sent: {order.orderId}")
+    # Resend API payload
+    payload = {
+        "from": "SHADOW Orders <onboarding@resend.dev>",
+        "to": [ORDER_EMAIL],
+        "subject": f"[SHADOW.] New Order #{order.orderId} — {order.occasion} ({order.mode.upper()})",
+        "text": body,
+        "attachments": attachments
+    }
+
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=data,
+        headers={
+            "Authorization": f"Bearer {RESEND_API_KEY}",
+            "Content-Type": "application/json"
+        },
+        method="POST"
+    )
+
+    with urllib.request.urlopen(req) as response:
+        result = json.loads(response.read().decode())
+        print(f"Email sent via Resend: {result}")
