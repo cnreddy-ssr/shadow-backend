@@ -30,7 +30,7 @@ ORDER_EMAIL   = os.environ.get("ORDER_EMAIL", "getcnr@gmail.com")
 
 class Photo(BaseModel):
     name: str
-    data: str  # base64 data URL
+    data: str
 
 class OrderRequest(BaseModel):
     orderId: str
