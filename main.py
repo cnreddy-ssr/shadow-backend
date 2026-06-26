@@ -2,6 +2,7 @@ import os
 import base64
 import json
 import urllib.request
+import urllib.error
 from datetime import datetime
 from typing import List, Optional
 
@@ -18,8 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-ORDER_EMAIL    = os.environ.get("ORDER_EMAIL", "getcnr@gmail.com")
+BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
+ORDER_EMAIL   = os.environ.get("ORDER_EMAIL", "cnreddy@gmail.com")
 
 
 class Photo(BaseModel):
@@ -50,30 +51,14 @@ def root():
 
 @app.get("/test-email")
 def test_email():
-    import json, urllib.request, urllib.error
     payload = {
-        "from": "SHADOW Orders <onboarding@resend.dev>",
-        "to": ["cnreddy@gmail.com"],
+        "sender": {"name": "SHADOW Orders", "email": "cnreddy@gmail.com"},
+        "to": [{"email": "cnreddy@gmail.com"}],
         "subject": "SHADOW. Test Email",
-        "text": "This is a test from SHADOW. backend."
+        "textContent": "This is a test from SHADOW. backend via Brevo."
     }
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        method="POST"
-    )
-    try:
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode())
-            return {"success": True, "resend_response": result}
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode()
-        return {"success": False, "status": e.code, "error": error_body, "api_key_set": bool(RESEND_API_KEY), "api_key_prefix": RESEND_API_KEY[:8] if RESEND_API_KEY else "EMPTY"}
+    result = call_brevo(payload)
+    return result
 
 
 @app.post("/order")
@@ -84,6 +69,29 @@ def receive_order(order: OrderRequest):
     except Exception as e:
         print(f"Email error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def call_brevo(payload: dict):
+    data = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        "https://api.brevo.com/v3/smtp/email",
+        data=data,
+        headers={
+            "api-key": BREVO_API_KEY,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        },
+        method="POST"
+    )
+    try:
+        with urllib.request.urlopen(req) as response:
+            result = json.loads(response.read().decode())
+            print(f"Brevo response: {result}")
+            return {"success": True, "response": result}
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode()
+        print(f"Brevo error {e.code}: {error_body}")
+        raise Exception(f"Brevo {e.code}: {error_body}")
 
 
 def send_order_email(order: OrderRequest):
@@ -119,44 +127,25 @@ Photos      : {len(order.photos)} photo(s) attached
 Please process and deliver via WhatsApp to +{order.deliveryPhone}
 """
 
+    # Build attachments
     attachments = []
     for i, photo in enumerate(order.photos):
         try:
             header, encoded = photo.data.split(",", 1)
             ext = "png" if "png" in header else "jpg"
             attachments.append({
-                "filename": f"order_{order.orderId}_photo{i+1}.{ext}",
-                "content": encoded
+                "content": encoded,
+                "name": f"order_{order.orderId}_photo{i+1}.{ext}"
             })
         except Exception as e:
             print(f"Could not prepare photo {i+1}: {e}")
 
-    # Resend free tier: from must be onboarding@resend.dev, to must be your own verified email
     payload = {
-        "from": "SHADOW Orders <onboarding@resend.dev>",
-        "to": ["cnreddy@gmail.com"],
-        "reply_to": ORDER_EMAIL,
+        "sender": {"name": "SHADOW Orders", "email": "cnreddy@gmail.com"},
+        "to": [{"email": ORDER_EMAIL}],
         "subject": f"[SHADOW.] New Order #{order.orderId} — {order.occasion} ({order.mode.upper()})",
-        "text": body,
-        "attachments": attachments
+        "textContent": body,
+        "attachment": attachments
     }
 
-    data = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {RESEND_API_KEY}",
-            "Content-Type": "application/json"
-        },
-        method="POST"
-    )
-
-    try:
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read().decode())
-            print(f"Email sent via Resend: {result}")
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode()
-        print(f"Resend error body: {error_body}")
-        raise Exception(f"Resend {e.code}: {error_body}")
+    call_brevo(payload)
